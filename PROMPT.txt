@@ -1,0 +1,14 @@
+Baue mir mit ChatGPT Sites eine private Aufgaben-App für Handy und Computer. Orientiere Design und Bedienung ausdrücklich an Apple Notes: schlichte Listen, Checkboxen und Dark Mode.
+
+Die App soll:
+- Eigene Projekt- und Themenlisten verwalten.
+- Aufgaben anlegen, bearbeiten, abhaken, verschieben und löschen.
+- Notizen, Fälligkeiten und Erinnerungen unterstützen.
+- Ansichten für „Heute“, „Diese Woche“, „Nächste Woche“ und „Dieser Monat“ bieten.
+- Ausgewählte bestehende Listen importieren und alle Daten exportieren.
+
+Speichere jede Aufgabe nur einmal. Sie soll gleichzeitig in ihrer Projektliste und der passenden Zeitansicht erscheinen. Änderungen und Erledigtstatus gelten überall.
+
+Richte eine dauerhafte Datenbank und einen MCP-Server ein, damit ich meine Listen und Aufgaben auch in ChatGPT per Text oder Sprachnachricht bearbeiten kann. Website und ChatGPT greifen auf dieselben Daten zu. Nur ich darf darauf zugreifen.
+
+Halte die App so einfach wie möglich. Setze sie um, teste das Zusammenspiel und gib mir den App-Link sowie eine kurze Anleitung zum Verbinden mit ChatGPT.

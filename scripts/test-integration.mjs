@@ -1,0 +1,41 @@
+import assert from 'node:assert/strict';
+import {parseImport} from '../lib/import.ts';
+import {todayVienna,inView} from '../lib/model.ts';
+const base=process.env.TEST_BASE||'http://127.0.0.1:5173';
+let token='';if(process.env.READ_SITE_TOKEN==='1'){
+ if(process.stdin.isTTY)process.stdin.setRawMode(true);
+ process.stdout.write('Ready for private Site test credential on stdin (input is hidden).\n');
+ token=await new Promise(resolve=>{let raw='';const read=chunk=>{raw+=chunk.toString();if(raw.includes('\n')){process.stdin.off('data',read);process.stdin.pause();if(process.stdin.isTTY)process.stdin.setRawMode(false);resolve(raw.trim());}};process.stdin.on('data',read);process.stdin.resume();});
+}
+const headers={'Content-Type':'application/json',...(token?{'OAI-Sites-Authorization':'Bearer '+token}:{})};
+const request=async(path,body,extra={})=>{const r=await fetch(base+path,{method:body?'POST':'GET',headers:{...headers,...extra},...(body?{body:JSON.stringify(body)}:{})});const text=await r.text();let data;try{data=JSON.parse(text);}catch{data={error:'Non-JSON response',status:r.status};}return {status:r.status,data};};
+const api=async(action,input={})=>{const r=await request('/api',{action,input});assert.equal(r.status,200,JSON.stringify(r.data));return r.data;};
+let n=0;const rpc=async(method,params={})=>{const r=await request('/mcp',{jsonrpc:'2.0',id:++n,method,params});assert.equal(r.status,200,JSON.stringify(r.data));assert.ok(!r.data.error,JSON.stringify(r.data));return r.data.result;};
+const tool=async(name,args={})=>{const r=await rpc('tools/call',{name,arguments:args});assert.ok(!r.isError,JSON.stringify(r));return JSON.parse(r.content[0].text);};
+const fiction=parseImport('# Projekt Garten\n- [ ] Hochbeet planen\n- [ ] Saatgut kaufen\n# Einkauf\n- [ ] Kaffee kaufen\n- [ ] Papier besorgen');
+const garden=fiction.lists.find(l=>l.name==='Projekt Garten'),shopping=fiction.lists.find(l=>l.name==='Einkauf');
+const gardenData={lists:[garden],tasks:fiction.tasks.filter(t=>t.listId===garden.id)};
+const shoppingData={lists:[shopping],tasks:fiction.tasks.filter(t=>t.listId===shopping.id)};
+const before=await api('snapshot');assert.ok(before.tasks.every(t=>fiction.tasks.some(f=>f.id===t.id)),'Only the explicitly supplied fictional fixtures may be present for this test.');
+assert.deepEqual((await rpc('server/discover')).supportedVersions,['2026-07-28']);
+const discovered=await rpc('tools/list');assert.equal(discovered.tools.length,11);
+assert.equal((await rpc('initialize',{protocolVersion:'2026-07-28'})).protocolVersion,'2026-07-28');
+await api('import',gardenData);let s=await api('snapshot');assert.ok(s.lists.some(l=>l.id===garden.id));assert.ok(!s.lists.some(l=>l.id===shopping.id));assert.equal(s.tasks.length,2);
+const again=await api('import',gardenData);assert.equal(again.importedTasks,0);assert.equal(again.skippedTasks,2);
+const key=gardenData.tasks[0].id;let task=await tool('get_task',{id:key});assert.equal(task.title,'Hochbeet planen');
+task=await tool('update_task',{id:key,revision:task.revision,changes:{notes:'Fiktiver Zusammenspiel-Test',dueDate:todayVienna(),reminderAt:'2026-10-26T08:00:00Z'}});
+s=await api('snapshot');let browserTask=s.tasks.find(t=>t.id===key);assert.equal(browserTask.notes,'Fiktiver Zusammenspiel-Test');assert.equal(s.tasks.filter(t=>t.id===key).length,1);for(const view of ['today','week','month',garden.id])assert.equal(inView(browserTask,view),true);
+let found=await tool('find_tasks',{view:'today',query:'Hochbeet'});assert.equal(found.tasks.length,1);
+const oldRevision=task.revision;task=await api('update_task',{id:key,revision:task.revision,changes:{done:true}});assert.equal((await tool('get_task',{id:key})).done,true);
+const stale=await request('/api',{action:'update_task',input:{id:key,revision:oldRevision,changes:{notes:'Darf nicht überschrieben werden'}}});assert.equal(stale.status,409);assert.equal((await tool('get_task',{id:key})).notes,'Fiktiver Zusammenspiel-Test');
+assert.equal((await request('/api',{action:'update_task',input:{id:key,revision:task.revision,changes:{dueDate:'2026-02-31'}}})).status,400);
+await tool('create_list',shopping);await tool('create_task',shoppingData.tasks[0]);await tool('create_task',shoppingData.tasks[0]);assert.equal((await tool('list_lists')).tasks.filter(t=>t.id===shoppingData.tasks[0].id).length,1);await tool('import_lists',shoppingData);task=await tool('update_task',{id:key,revision:task.revision,changes:{listId:shopping.id}});s=await api('snapshot');assert.equal(s.tasks.find(t=>t.id===key).listId,shopping.id);
+assert.equal((await request('/api',{action:'delete_list',input:{id:shopping.id,revision:s.lists.find(l=>l.id===shopping.id).revision}})).status,409);
+task=await api('update_task',{id:key,revision:task.revision,changes:{listId:garden.id,notes:'',dueDate:null,reminderAt:null,done:false}});
+for(const t of shoppingData.tasks){const current=await tool('get_task',{id:t.id});await tool('delete_task',{id:t.id,revision:current.revision});}
+s=await api('snapshot');await tool('delete_list',{id:shopping.id,revision:s.lists.find(l=>l.id===shopping.id).revision});
+const list=s.lists.find(l=>l.id===garden.id);await tool('update_list',{id:garden.id,revision:list.revision,name:'Projekt Garten – Test',kind:'topic'});s=await api('snapshot');assert.equal(s.lists.find(l=>l.id===garden.id).kind,'topic');await api('update_list',{id:garden.id,revision:s.lists.find(l=>l.id===garden.id).revision,name:'Projekt Garten',kind:'project'});
+const exported=await tool('export_data');assert.equal(exported.tasks.length,2);assert.equal(exported.lists.length,1);assert.deepEqual(parseImport(JSON.stringify(exported)).tasks.map(t=>t.title).sort(),['Hochbeet planen','Saatgut kaufen'].sort());
+assert.equal((await request('/api',{action:'create_list',input:{id:'csrf-test',name:'CSRF'}},{Origin:'https://other.example'})).status,403);
+const final=await api('snapshot');assert.equal(final.tasks.length,2);assert.equal(final.tasks[0].done,false);
+console.log(JSON.stringify({passed:true,base,checks:['MCP discovery and all 11 tools exercised','idempotent MCP creation','selected Garten import excludes Einkauf','repeat import skips duplicates','MCP notes/date/reminder → browser API','one record in project/today/week/month','browser completion → MCP','stale revision rejected','invalid date rejected','MCP move and restore','nonempty list deletion rejected','MCP task and list deletion','list rename and type','complete JSON export roundtrip','cross-origin mutation rejected'],remaining:{lists:final.lists.map(l=>l.name),tasks:final.tasks.map(t=>t.title)}}));
